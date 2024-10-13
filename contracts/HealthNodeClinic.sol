@@ -17,6 +17,9 @@ contract HealthNode {
         bool registered;
     }
 
+
+    address public admin;
+
     // // Structure to store patient record permissions
     // struct Record {
     //     string recordHash; // Reference to the medical record stored on decentralized storage (IPFS/Arweave)
@@ -28,6 +31,10 @@ contract HealthNode {
         address hospitalAddress;
         uint256 timestamp;
         bool approved;
+    }
+    /// @dev Assign the contract deployer as admin.
+    constructor() {
+        admin = msg.sender;
     }
 
     // Mappings to store hospitals and patient permissions.
@@ -54,6 +61,12 @@ contract HealthNode {
     // Modifier to check if a hospital/clinic is already registered
     modifier notRegistered() {
         require(!hospitals[msg.sender].registered, "Hospital is already registered");
+        _;
+    }
+
+    // Modifier to check if the is calling the function
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Only owner can perform this action");
         _;
     }
 
@@ -129,10 +142,10 @@ contract HealthNode {
         return request.approved;
     }
     
-    /// @notice Returns the list of hospitals/clinics with access to the patient's records.
+    /// @notice Returns the list of hospitals/clinics with access to the patient's records for the admin only.
     /// @param _patientAddress The address of the patient.
     /// @return List of addresses of hospitals that have access to the patient's records.
-    function getApprovedHospitals(address _patientAddress) external view returns (address[] memory) {
+    function getApprovedHospitals(address _patientAddress) external view returns onlyAdmin (address[] memory) {
         require(_patientAddress != address(0), "Zero address not allowed!");
         return patientPermissions[_patientAddress];
     }

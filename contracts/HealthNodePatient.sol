@@ -3,10 +3,11 @@ pragma solidity ^0.8.26;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
-// interface IDoctorNode {
-//     function isDoctorAvailable(address doctorAddr) external view returns (bool);
-//     function getDoctorServices(address doctorAddr) external view returns (bool homeVisit, bool liveConsultation);
-// }
+
+interface IDoctorNode {
+    function isDoctorAvailable(address doctorAddr) external view returns (bool);
+    function getDoctorServices(address doctorAddr) external view returns (bool service);
+}
 
 
 contract PatientNode is AccessControl {
@@ -33,8 +34,17 @@ contract PatientNode is AccessControl {
         uint256 accessExpiration;
     }
 
+
+    // Available Doctor Info
+    struct AvailableDoctor {
+        address doctorAddress;
+        bool offersService;
+    }
+
+    
     mapping(address => Patient) private patients;
     mapping(address => mapping(address => DoctorAccess)) private doctorAccess;
+
     
 
 
@@ -42,6 +52,8 @@ contract PatientNode is AccessControl {
     event MedicalRecordUploaded(address indexed patient, string ipfsHash);
     event DoctorAccessGranted(address indexed patient, address indexed doctor, uint256 expirationTime);
     event DoctorAccessRevoked(address indexed patient, address indexed doctor);
+    event ServiceSelected(address indexed patient, address indexed doctor, bool offersService);
+
 
 
     constructor() {
@@ -94,7 +106,7 @@ contract PatientNode is AccessControl {
 
 
     // grant access to doctor. 
-    function grantAccessToDoctor(address doctorAddr, uint256 accessDuration) external onlyRole(PATIENT_ROLE) {
+    function grantAccessToDoctor(address doctorAddr, uint256 accessDuration) internal onlyRole(PATIENT_ROLE) {
         require(patients[msg.sender].registered, "Only registered patients can grant access");
         require(doctorNode.isDoctorAvailable(doctorAddr), "Doctor not available");
         require(hasRole(DOCTOR_ROLE, doctorAddr), "Address is not a registered doctor");
@@ -122,6 +134,53 @@ contract PatientNode is AccessControl {
             doctorAccess[patientAddr][doctorAddr].accessExpiration > block.timestamp
         );
     }
+
+    // get available doctors
+    function browseAvailableDoctors(address[] memory doctorAddresses) external view onlyRole(PATIENT_ROLE) returns (AvailableDoctor[] memory) {
+        require(patients[msg.sender].registered, "Only registered patients can browse doctors");
+
+        // a dynamic array to store available doctors
+        AvailableDoctor[] memory availableDoctors = new AvailableDoctor[](doctorAddresses.length);
+        uint256 availableDoctorCount = 0;
+
+        // Loop through doctor addresses, check availability, and get services
+        for (uint256 i = 0; i < doctorAddresses.length; i++) {
+            if (doctorNode.isDoctorAvailable(doctorAddresses[i])) {
+                bool offersService = doctorNode.getDoctorServices(doctorAddresses[i]);
+                availableDoctors[availableDoctorCount] = AvailableDoctor({
+                    doctorAddress: doctorAddresses[i],
+                    offersService: offersService
+                });
+                availableDoctorCount++;
+            }
+        }
+
+        // Create a new array with the exact size of available doctors
+        AvailableDoctor[] memory result = new AvailableDoctor[](availableDoctorCount);
+        for (uint256 i = 0; i < availableDoctorCount; i++) {
+            result[i] = availableDoctors[i];
+        }
+
+        return result;
+    }
+
+    // select doctor service.
+   function selectDoctorService(address doctorAddr, uint256 accessDuration) external onlyRole(PATIENT_ROLE) {
+        require(patients[msg.sender].registered, "Only registered patients can select a doctor service");
+        require(doctorNode.isDoctorAvailable(doctorAddr), "Selected doctor is not available");
+        
+        bool offersService = doctorNode.getDoctorServices(doctorAddr);
+        require(offersService, "Selected doctor does not offer the service");
+
+        grantAccessToDoctor(doctorAddr, accessDuration);
+        
+        emit ServiceSelected(msg.sender, doctorAddr, offersService);
+    }
+
+
+
+   
+
 
     
 }

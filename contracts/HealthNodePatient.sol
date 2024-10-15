@@ -3,7 +3,6 @@ pragma solidity ^0.8.26;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
-
 interface IDoctorNode {
     function isDoctorAvailable(address doctorAddr) external view returns (bool);
     function getDoctorServices(address doctorAddr) external view returns (bool service);
@@ -13,11 +12,6 @@ interface IDoctorNode {
 contract PatientNode is AccessControl {
 
     IDoctorNode public doctorNode;
-
-    // roles
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant DOCTOR_ROLE = keccak256("DOCTOR_ROLE");
-    bytes32 public constant PATIENT_ROLE = keccak256("PATIENT_ROLE");
 
     // Patient
     struct Patient {
@@ -41,20 +35,15 @@ contract PatientNode is AccessControl {
         bool offersService;
     }
 
-    
     mapping(address => Patient) private patients;
     mapping(address => mapping(address => DoctorAccess)) private doctorAccess;
 
-    
-
-
     event PatientRegistered(address indexed patient, string name);
     event MedicalRecordUploaded(address indexed patient, string ipfsHash);
+    event MedicalRecordUpdated(address indexed patient, string consultationNotes);
     event DoctorAccessGranted(address indexed patient, address indexed doctor, uint256 expirationTime);
     event DoctorAccessRevoked(address indexed patient, address indexed doctor);
     event ServiceSelected(address indexed patient, address indexed doctor, bool offersService);
-
-
 
     constructor() {
         // _setupRole(ADMIN_ROLE, admin);
@@ -69,7 +58,8 @@ contract PatientNode is AccessControl {
             name: _name,
             age: _age,
             gender: _gender,
-            ipfsRecordHash: "" 
+            ipfsRecordHash: "" ,
+            consultationNotes: ""
         });
 
         _grantRole(PATIENT_ROLE, msg.sender);
@@ -103,7 +93,15 @@ contract PatientNode is AccessControl {
         Patient memory patient = patients[patientAddr];
         return (patient.name, patient.age, patient.gender, patient.ipfsRecordHash);
     }
+    
+    
+    function updateMedicalRecord(address patientAddr, string memory _consultationNotes) public onlyRole(DOCTOR_ROLE) {
+        require(patients[patientAddr].registered, "Patient not registered");
 
+        patients[patientAddr].consultationNotes = _consultationNotes;
+
+        emit MedicalRecordUpdated(patientAddr, _consultationNotes);
+    }
 
     // grant access to doctor. 
     function grantAccessToDoctor(address doctorAddr, uint256 accessDuration) internal onlyRole(PATIENT_ROLE) {
@@ -176,11 +174,4 @@ contract PatientNode is AccessControl {
         
         emit ServiceSelected(msg.sender, doctorAddr, offersService);
     }
-
-
-
-   
-
-
-    
 }

@@ -1,177 +1,78 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "./HealthNodeHelpers.sol";
 
-interface IDoctorNode {
-    function isDoctorAvailable(address doctorAddr) external view returns (bool);
-    function getDoctorServices(address doctorAddr) external view returns (bool service);
-}
-
-
-contract PatientNode is AccessControl {
-
-    IDoctorNode public doctorNode;
-
-    // Patient
-    struct Patient {
-        bool registered;
-        string name;
-        uint256 age;
-        string gender;
-        string ipfsRecordHash;  // Hash to store medical records from IPFS
-    }
-
-    // Doctor Access
-    struct DoctorAccess {
-        bool hasAccess;
-        uint256 accessExpiration;
-    }
-
-
-    // Available Doctor Info
-    struct AvailableDoctor {
-        address doctorAddress;
-        bool offersService;
-    }
-
-    mapping(address => Patient) private patients;
-    mapping(address => mapping(address => DoctorAccess)) private doctorAccess;
-
-    event PatientRegistered(address indexed patient, string name);
-    event MedicalRecordUploaded(address indexed patient, string ipfsHash);
-    event MedicalRecordUpdated(address indexed patient, string consultationNotes);
-    event DoctorAccessGranted(address indexed patient, address indexed doctor, uint256 expirationTime);
-    event DoctorAccessRevoked(address indexed patient, address indexed doctor);
-    event ServiceSelected(address indexed patient, address indexed doctor, bool offersService);
+contract HealthNodePatient is HealthNodeHelpers {
 
     constructor() {
         // _setupRole(ADMIN_ROLE, admin);
         // doctorNode = IDoctorNode(_doctorNodeAddress);
     }
 
-    function registerPatient(string memory _name, uint256 _age, string memory _gender) public {
-        require(!patients[msg.sender].registered, "Patient already registered");
+   // **************** WRITE FUNCTIONS ******************* //
+    function registerPatient(string memory _name, string memory _email, string memory _gender, uint8 _age) external { 
+        // Perform sanity check
+        checkZeroAddress();
+        require(!patients[msg.sender].isRegistered, PatientAlreadyRegistered());
 
-        patients[msg.sender] = Patient({
-            registered: true,
-            name: _name,
-            age: _age,
-            gender: _gender,
-            ipfsRecordHash: "" ,
-            consultationNotes: ""
-        });
+        //
+        checkStringLength(_name);
+        checkStringLength(_email);
+        checkStringLength(_gender);
+
+        uint256 patientId = patientCounter++;
+
+        Patient memory newPatient;
+
+        newPatient.id = patientId;
+        newPatient.name = _name;
+        newPatient.email = _email;
+        newPatient.gender = _gender;
+        newPatient.age = _age;
+        newPatient.isRegistered = true;
+        newPatient.isActive = true;
+
+        patients[msg.sender] = newPatient;
+        patientList.push(newPatient);
 
         _grantRole(PATIENT_ROLE, msg.sender);
 
         emit PatientRegistered(msg.sender, _name);
     }
 
-    // upload medical records to IPFS (by patient themselves)
-    function uploadMedicalRecord(string memory _ipfsRecordHash) public onlyRole(PATIENT_ROLE) {
-        require(patients[msg.sender].registered, "Patient not registered");
+    // **************** VIEW FUNCTIONS ******************* //
 
-        patients[msg.sender].ipfsRecordHash = _ipfsRecordHash;
+    function viewMedicalRecords() external view onlyRole(PATIENT_ROLE) returns (string[] memory) {
+        checkSelfPatientStatus();
 
-        emit MedicalRecordUploaded(msg.sender, _ipfsRecordHash);
+        return patients[msg.sender].ipfsRecordHashes;
     }
 
-    function viewMedicalRecord(address patientAddr) public view onlyRole(DOCTOR_ROLE) returns (string memory) {
-        require(patients[patientAddr].registered, "Patient not registered");
+    function viewMedicalRecord(uint256 _hashId) external view onlyRole(PATIENT_ROLE) returns (string memory) {
+        // Perform sanity check
+        checkSelfPatientStatus();
 
-        return patients[patientAddr].ipfsRecordHash;
+        return patients[msg.sender].ipfsRecordHashes[_hashId]; //??
     }
 
-    // Retrieve patient data (for frontend)
-    function getPatientData(address patientAddr) public view returns (string memory, uint256, string memory, string memory) {
-        require(patients[patientAddr].registered, "Patient not registered");
-        require(
-                isDoctorAuthorized(patientAddr, msg.sender),
-                "Doctor does not have active access to this patient's data"
-            );
+    function getMyData() external view onlyRole(PATIENT_ROLE) returns (string memory, string memory, string memory, uint256) {
+        // Perform sanity check
+        checkSelfPatientStatus();
 
-        Patient memory patient = patients[patientAddr];
-        return (patient.name, patient.age, patient.gender, patient.ipfsRecordHash);
-    }
-    
-    
-    function updateMedicalRecord(address patientAddr, string memory _consultationNotes) public onlyRole(DOCTOR_ROLE) {
-        require(patients[patientAddr].registered, "Patient not registered");
-
-        patients[patientAddr].consultationNotes = _consultationNotes;
-
-        emit MedicalRecordUpdated(patientAddr, _consultationNotes);
-    }
-
-    // grant access to doctor. 
-    function grantAccessToDoctor(address doctorAddr, uint256 accessDuration) internal onlyRole(PATIENT_ROLE) {
-        require(patients[msg.sender].registered, "Only registered patients can grant access");
-        require(doctorNode.isDoctorAvailable(doctorAddr), "Doctor not available");
-        require(hasRole(DOCTOR_ROLE, doctorAddr), "Address is not a registered doctor");
-        
-        uint256 expirationTime = block.timestamp + accessDuration;
-        doctorAccess[msg.sender][doctorAddr] = DoctorAccess(true, expirationTime);
-        
-        emit DoctorAccessGranted(msg.sender, doctorAddr, expirationTime);
-    }
-
-
-    // revoke access
-    function revokeAccessFromDoctor(address doctorAddr) external onlyRole(PATIENT_ROLE) {
-        require(patients[msg.sender].registered, "Only registered patients can revoke access");
-        require(doctorAccess[msg.sender][doctorAddr].hasAccess, "Doctor does not have access");
-        
-        delete doctorAccess[msg.sender][doctorAddr];
-        
-        emit DoctorAccessRevoked(msg.sender, doctorAddr);
-    }
-
-    function isDoctorAuthorized(address patientAddr, address doctorAddr) internal view returns (bool) {
-        return (
-            doctorAccess[patientAddr][doctorAddr].hasAccess &&
-            doctorAccess[patientAddr][doctorAddr].accessExpiration > block.timestamp
-        );
-    }
-
-    // get available doctors
-    function browseAvailableDoctors(address[] memory doctorAddresses) external view onlyRole(PATIENT_ROLE) returns (AvailableDoctor[] memory) {
-        require(patients[msg.sender].registered, "Only registered patients can browse doctors");
-
-        // a dynamic array to store available doctors
-        AvailableDoctor[] memory availableDoctors = new AvailableDoctor[](doctorAddresses.length);
-        uint256 availableDoctorCount = 0;
-
-        // Loop through doctor addresses, check availability, and get services
-        for (uint256 i = 0; i < doctorAddresses.length; i++) {
-            if (doctorNode.isDoctorAvailable(doctorAddresses[i])) {
-                bool offersService = doctorNode.getDoctorServices(doctorAddresses[i]);
-                availableDoctors[availableDoctorCount] = AvailableDoctor({
-                    doctorAddress: doctorAddresses[i],
-                    offersService: offersService
-                });
-                availableDoctorCount++;
-            }
-        }
-
-        // Create a new array with the exact size of available doctors
-        AvailableDoctor[] memory result = new AvailableDoctor[](availableDoctorCount);
-        for (uint256 i = 0; i < availableDoctorCount; i++) {
-            result[i] = availableDoctors[i];
-        }
-
-        return result;
-    }
-
-    // select doctor service.
-   function selectDoctorService(address doctorAddr, uint256 accessDuration) external onlyRole(PATIENT_ROLE) {
-        require(patients[msg.sender].registered, "Only registered patients can select a doctor service");
-        require(doctorNode.isDoctorAvailable(doctorAddr), "Selected doctor is not available");
-        
-        bool offersService = doctorNode.getDoctorServices(doctorAddr);
-        require(offersService, "Selected doctor does not offer the service");
-
-        grantAccessToDoctor(doctorAddr, accessDuration);
-        
-        emit ServiceSelected(msg.sender, doctorAddr, offersService);
+        Patient memory patient = patients[msg.sender];
+        return (patient.name, patient.email, patient.gender, patient.age);
     }
 }
+
+
+/*
+
+Patient Flow:
+● Register on the platform and upload medical records to decentralized storage. - levi 
+● Browse available doctors and select the service (home visit or live consultation). - koxy
+● Grant the selected doctor temporary access to medical records. - koxy
+● Conduct live consultation or receive home service. -  levi
+● Pay for the service via cryptocurrency, and have the doctor’s notes added to their records. - dike
+
+*/
